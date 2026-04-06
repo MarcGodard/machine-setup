@@ -66,6 +66,11 @@ ok "pcsc-lite-ccid and gnupg2-scdaemon installed."
 # Pass 2: YubiKey + GitHub SSH setup
 # ---------------------------------------------------------------------------
 
+# GPG_TTY must be set so pinentry-curses can prompt for PIN after a reboot.
+# Without this, gpg-agent fails immediately instead of asking for the PIN.
+export GPG_TTY=$(tty)
+export SSH_AUTH_SOCK=$(gpgconf --list-dirs agent-ssh-socket 2>/dev/null || true)
+
 # 1. Start pcscd
 info "Starting pcscd..."
 sudo systemctl start pcscd 2>/dev/null || true
@@ -211,9 +216,11 @@ echo "=============================="
 echo "  Ready"
 echo "=============================="
 echo
-warn "SSH_AUTH_SOCK is only set inside this script. Run this in your shell first:"
+warn "These env vars are only set inside this script. Run in your shell before cloning:"
 echo
+echo "    export GPG_TTY=\$(tty)"
 echo "    export SSH_AUTH_SOCK=\$(gpgconf --list-dirs agent-ssh-socket)"
+echo "    gpg-connect-agent updatestartuptty /bye"
 echo
 info "Then clone your dotfiles and run bootstrap:"
 echo
