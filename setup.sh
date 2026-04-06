@@ -37,16 +37,20 @@ echo
 # Pass 1: Install pcsc-lite-ccid (YubiKey CCID driver) if not present.
 # This requires a reboot on Fedora Atomic — re-run setup.sh after reboot.
 # ---------------------------------------------------------------------------
-if ! rpm -q pcsc-lite-ccid &>/dev/null; then
-  info "Installing YubiKey CCID driver (pcsc-lite-ccid)..."
-  rpm-ostree install pcsc-lite-ccid
+MISSING_PKGS=()
+rpm -q pcsc-lite-ccid   &>/dev/null || MISSING_PKGS+=(pcsc-lite-ccid)
+rpm -q gnupg2-scdaemon  &>/dev/null || MISSING_PKGS+=(gnupg2-scdaemon)
+
+if [[ ${#MISSING_PKGS[@]} -gt 0 ]]; then
+  info "Installing: ${MISSING_PKGS[*]}"
+  rpm-ostree install "${MISSING_PKGS[@]}"
 
   echo
   echo "========================================"
   echo "  REBOOT REQUIRED"
   echo "========================================"
   echo
-  info "pcsc-lite-ccid has been staged. After rebooting, re-run:"
+  info "Packages staged. After rebooting, re-run:"
   echo
   echo "    bash ~/machine-setup/setup.sh"
   echo
@@ -55,7 +59,7 @@ if ! rpm -q pcsc-lite-ccid &>/dev/null; then
   exit 0
 fi
 
-ok "pcsc-lite-ccid installed."
+ok "pcsc-lite-ccid and gnupg2-scdaemon installed."
 
 # ---------------------------------------------------------------------------
 # Pass 2: YubiKey + GitHub SSH setup
@@ -73,18 +77,8 @@ gpgconf --kill gpg-agent 2>/dev/null || true
 
 mkdir -p "$HOME/.gnupg" && chmod 700 "$HOME/.gnupg"
 
-# Locate scdaemon — it is not always in PATH on Fedora Atomic
-SCDAEMON_BIN=$(command -v scdaemon 2>/dev/null \
-  || ls /usr/lib/gnupg/scdaemon \
-     /usr/libexec/scdaemon \
-     /usr/lib/gnupg2/scdaemon \
-     /usr/bin/scdaemon 2>/dev/null | head -1 || true)
-[[ -n "$SCDAEMON_BIN" ]] || die "scdaemon not found — install gnupg2 and try again"
-
 grep -q "enable-ssh-support" "$HOME/.gnupg/gpg-agent.conf" 2>/dev/null \
   || echo "enable-ssh-support" >> "$HOME/.gnupg/gpg-agent.conf"
-grep -q "scdaemon-program" "$HOME/.gnupg/gpg-agent.conf" 2>/dev/null \
-  || echo "scdaemon-program $SCDAEMON_BIN" >> "$HOME/.gnupg/gpg-agent.conf"
 grep -q "disable-ccid" "$HOME/.gnupg/scdaemon.conf" 2>/dev/null \
   || echo "disable-ccid" >> "$HOME/.gnupg/scdaemon.conf"
 
