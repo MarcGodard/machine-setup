@@ -77,8 +77,21 @@ gpgconf --kill gpg-agent 2>/dev/null || true
 
 mkdir -p "$HOME/.gnupg" && chmod 700 "$HOME/.gnupg"
 
+# Find scdaemon — ask rpm first, then fall back to known paths
+SCDAEMON=$(rpm -ql gnupg2-scdaemon 2>/dev/null | grep -m1 '/scdaemon$' || true)
+if [[ -z "$SCDAEMON" ]]; then
+  for p in /usr/libexec/scdaemon /usr/lib/gnupg2/scdaemon /usr/lib/gnupg/scdaemon /usr/bin/scdaemon; do
+    [[ -x "$p" ]] && SCDAEMON="$p" && break
+  done
+fi
+[[ -n "$SCDAEMON" ]] || die "scdaemon not found — install gnupg2-scdaemon and try again"
+ok "scdaemon found at $SCDAEMON"
+
 grep -q "enable-ssh-support" "$HOME/.gnupg/gpg-agent.conf" 2>/dev/null \
   || echo "enable-ssh-support" >> "$HOME/.gnupg/gpg-agent.conf"
+# Tell gpg-agent exactly where scdaemon is — avoids "No SmartCard daemon" errors
+grep -q "scdaemon-program" "$HOME/.gnupg/gpg-agent.conf" 2>/dev/null \
+  || echo "scdaemon-program $SCDAEMON" >> "$HOME/.gnupg/gpg-agent.conf"
 grep -q "disable-ccid" "$HOME/.gnupg/scdaemon.conf" 2>/dev/null \
   || echo "disable-ccid" >> "$HOME/.gnupg/scdaemon.conf"
 
