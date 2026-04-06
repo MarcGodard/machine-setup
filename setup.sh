@@ -121,53 +121,52 @@ else
 fi
 
 # 4. Link YubiKey
-if ssh-add -L &>/dev/null 2>&1; then
-  ok "YubiKey already linked — SSH key visible in agent."
-else
-  echo
-  info "Insert your YubiKey now."
-  read -rp "  Press Enter when ready... " _
+# Always prompt and connect the physical card — even if the key stub is
+# already in the agent, scdaemon hasn't talked to the card since the last
+# reboot and SSH signing will fail immediately without this warm-up.
+echo
+info "Insert your YubiKey now."
+read -rp "  Press Enter when ready... " _
 
-  # Restart scdaemon so it picks up disable-ccid and connects fresh to pcscd
-  gpgconf --kill scdaemon 2>/dev/null || true
+# Restart scdaemon so it connects fresh to pcscd
+gpgconf --kill scdaemon 2>/dev/null || true
+sleep 1
+
+# Wait for card to be detected
+card_ok=false
+for i in $(seq 1 5); do
+  if gpg --card-status &>/dev/null 2>&1; then
+    card_ok=true
+    break
+  fi
   sleep 1
+done
 
-  # Retry card-status a few times — scdaemon takes a moment to start
-  card_ok=false
-  for i in $(seq 1 5); do
-    if gpg --card-status &>/dev/null 2>&1; then
-      card_ok=true
-      break
-    fi
-    sleep 1
-  done
-
-  if ! $card_ok; then
-    echo
-    warn "YubiKey not detected after 5 attempts."
-    info "Diagnostics:"
-    sudo systemctl status pcscd --no-pager -l 2>/dev/null | tail -5 || true
-    gpg --card-status 2>&1 | tail -5 || true
-    die "Check the YubiKey is fully inserted and pcscd is running, then re-run setup.sh"
-  fi
-
-  gpg-connect-agent "scd serialno" "learn --force" /bye 2>/dev/null || true
-
-  KEYGRIP=$(gpg --with-keygrip --list-keys "$KEY_FPR" 2>/dev/null \
-    | awk '/\[A\]/{found=1} found && /Keygrip/{print $3; exit}')
-
-  if [[ -n "$KEYGRIP" ]]; then
-    touch "$HOME/.gnupg/sshcontrol"
-    grep -q "^$KEYGRIP" "$HOME/.gnupg/sshcontrol" 2>/dev/null \
-      || echo "$KEYGRIP" >> "$HOME/.gnupg/sshcontrol"
-    gpg-connect-agent reloadagent /bye &>/dev/null || true
-  fi
-
-  ssh-add -L &>/dev/null 2>&1 \
-    || die "YubiKey linked but SSH key not visible. Try: sudo systemctl restart pcscd && gpg --card-status"
-
-  ok "YubiKey linked — SSH key visible in agent."
+if ! $card_ok; then
+  warn "YubiKey not detected after 5 attempts."
+  sudo systemctl status pcscd --no-pager -l 2>/dev/null | tail -5 || true
+  gpg --card-status 2>&1 | tail -5 || true
+  die "Check the YubiKey is fully inserted and pcscd is running, then re-run setup.sh"
 fi
+ok "YubiKey card connected."
+
+# Learn the card and populate sshcontrol if not already done
+gpg-connect-agent "scd serialno" "learn --force" /bye 2>/dev/null || true
+
+KEYGRIP=$(gpg --with-keygrip --list-keys "$KEY_FPR" 2>/dev/null \
+  | awk '/\[A\]/{found=1} found && /Keygrip/{print $3; exit}')
+
+if [[ -n "$KEYGRIP" ]]; then
+  touch "$HOME/.gnupg/sshcontrol"
+  grep -q "^$KEYGRIP" "$HOME/.gnupg/sshcontrol" 2>/dev/null \
+    || echo "$KEYGRIP" >> "$HOME/.gnupg/sshcontrol"
+  gpg-connect-agent reloadagent /bye &>/dev/null || true
+fi
+
+ssh-add -L &>/dev/null 2>&1 \
+  || die "SSH key not visible. Try: sudo systemctl restart pcscd && gpg --card-status"
+
+ok "YubiKey linked — SSH key visible in agent."
 
 # 5. Pre-populate ~/.ssh/known_hosts with GitHub keys
 mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
