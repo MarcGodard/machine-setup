@@ -72,8 +72,19 @@ gpgconf --kill scdaemon  2>/dev/null || true
 gpgconf --kill gpg-agent 2>/dev/null || true
 
 mkdir -p "$HOME/.gnupg" && chmod 700 "$HOME/.gnupg"
+
+# Locate scdaemon — it is not always in PATH on Fedora Atomic
+SCDAEMON_BIN=$(command -v scdaemon 2>/dev/null \
+  || ls /usr/lib/gnupg/scdaemon \
+     /usr/libexec/scdaemon \
+     /usr/lib/gnupg2/scdaemon \
+     /usr/bin/scdaemon 2>/dev/null | head -1 || true)
+[[ -n "$SCDAEMON_BIN" ]] || die "scdaemon not found — install gnupg2 and try again"
+
 grep -q "enable-ssh-support" "$HOME/.gnupg/gpg-agent.conf" 2>/dev/null \
   || echo "enable-ssh-support" >> "$HOME/.gnupg/gpg-agent.conf"
+grep -q "scdaemon-program" "$HOME/.gnupg/gpg-agent.conf" 2>/dev/null \
+  || echo "scdaemon-program $SCDAEMON_BIN" >> "$HOME/.gnupg/gpg-agent.conf"
 grep -q "disable-ccid" "$HOME/.gnupg/scdaemon.conf" 2>/dev/null \
   || echo "disable-ccid" >> "$HOME/.gnupg/scdaemon.conf"
 
