@@ -40,6 +40,7 @@ echo
 MISSING_PKGS=()
 rpm -q pcsc-lite-ccid   &>/dev/null || MISSING_PKGS+=(pcsc-lite-ccid)
 rpm -q gnupg2-scdaemon  &>/dev/null || MISSING_PKGS+=(gnupg2-scdaemon)
+rpm -q pass             &>/dev/null || MISSING_PKGS+=(pass)
 
 if [[ ${#MISSING_PKGS[@]} -gt 0 ]]; then
   info "Installing: ${MISSING_PKGS[*]}"
