@@ -212,7 +212,11 @@ echo "=============================="
 echo "  Ready"
 echo "=============================="
 echo
-info "Clone your dotfiles and run bootstrap:"
+warn "SSH_AUTH_SOCK is only set inside this script. Run this in your shell first:"
+echo
+echo "    export SSH_AUTH_SOCK=\$(gpgconf --list-dirs agent-ssh-socket)"
+echo
+info "Then clone your dotfiles and run bootstrap:"
 echo
 echo "    git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles"
 echo "    bash ~/.dotfiles/bootstrap.sh"
