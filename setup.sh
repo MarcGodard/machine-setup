@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # setup.sh — Pre-bootstrap YubiKey + GitHub SSH setup
 #
-# Run this once on a fresh Fedora Atomic machine before cloning your dotfiles.
-# It sets up gpg-agent, links the YubiKey, and opens a persistent SSH connection
-# to GitHub so the dotfiles bootstrap can clone private repos without issues.
+# Public entry point for a fresh Fedora Atomic machine.
+# Run this BEFORE cloning your private dotfiles repo.
+#
+# Pass 1 (no YubiKey needed):
+#   Installs pcsc-lite-ccid (YubiKey CCID driver) via rpm-ostree and exits.
+#   Reboot, then re-run.
+#
+# Pass 2 (YubiKey required):
+#   Links the YubiKey to gpg-agent, opens a persistent SSH ControlMaster
+#   connection to GitHub, then prints the commands to clone + run dotfiles.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/MarcGodard/machine-setup/main/setup.sh | bash
-#   # or after cloning:
-#   bash setup.sh
+#   git clone https://github.com/MarcGodard/machine-setup.git ~/machine-setup
+#   bash ~/machine-setup/setup.sh
 
 set -euo pipefail
 
@@ -18,53 +24,61 @@ ok()   { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 die()  { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/stdin}")" 2>/dev/null && pwd || echo "$HOME")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PUBKEY="$SCRIPT_DIR/pubkey.asc"
 
-# ---------------------------------------------------------------------------
-# 1. Derive fingerprint from the public key file
-# ---------------------------------------------------------------------------
-if [[ ! -f "$PUBKEY" ]]; then
-  # Fallback: fetch from the repo if run via curl
-  info "Fetching public key..."
-  curl -fsSL https://raw.githubusercontent.com/MarcGodard/machine-setup/main/pubkey.asc \
-    -o /tmp/pubkey.asc
-  PUBKEY=/tmp/pubkey.asc
-fi
-
-KEY_FPR=$(gpg --with-colons --import-options show-only --import "$PUBKEY" 2>/dev/null \
-  | awk -F: '/^fpr/{print $10; exit}')
-[[ -n "$KEY_FPR" ]] || die "Could not read fingerprint from $PUBKEY"
+echo
+echo "=============================="
+echo "  Machine Setup"
+echo "=============================="
+echo
 
 # ---------------------------------------------------------------------------
-# 2. Start pcscd (smartcard daemon)
+# Pass 1: Install pcsc-lite-ccid (YubiKey CCID driver) if not present.
+# This requires a reboot on Fedora Atomic — re-run setup.sh after reboot.
 # ---------------------------------------------------------------------------
-info "Starting pcscd..."
 if ! rpm -q pcsc-lite-ccid &>/dev/null; then
-  die "pcsc-lite-ccid is not installed. Run bootstrap Pass 1 first, then reboot, then re-run this script."
+  info "Installing YubiKey CCID driver (pcsc-lite-ccid)..."
+  rpm-ostree install pcsc-lite-ccid
+
+  echo
+  echo "========================================"
+  echo "  REBOOT REQUIRED"
+  echo "========================================"
+  echo
+  info "pcsc-lite-ccid has been staged. After rebooting, re-run:"
+  echo
+  echo "    bash ~/machine-setup/setup.sh"
+  echo
+  info "Then plug in your YubiKey and you will be ready to clone dotfiles."
+  echo
+  exit 0
 fi
+
+ok "pcsc-lite-ccid installed."
+
+# ---------------------------------------------------------------------------
+# Pass 2: YubiKey + GitHub SSH setup
+# ---------------------------------------------------------------------------
+
+# 1. Start pcscd
+info "Starting pcscd..."
 sudo systemctl start pcscd 2>/dev/null || true
 ok "pcscd running."
 
-# ---------------------------------------------------------------------------
-# 3. Kill any stale gpg-agent and relaunch with SSH support
-# ---------------------------------------------------------------------------
+# 2. Kill stale gpg-agent and relaunch with SSH support
 info "Launching gpg-agent..."
 gpgconf --kill scdaemon  2>/dev/null || true
 gpgconf --kill gpg-agent 2>/dev/null || true
 
-# Ensure enable-ssh-support is set before launching
 mkdir -p "$HOME/.gnupg" && chmod 700 "$HOME/.gnupg"
-if ! grep -q "enable-ssh-support" "$HOME/.gnupg/gpg-agent.conf" 2>/dev/null; then
-  echo "enable-ssh-support" >> "$HOME/.gnupg/gpg-agent.conf"
-fi
-if ! grep -q "disable-ccid" "$HOME/.gnupg/scdaemon.conf" 2>/dev/null; then
-  echo "disable-ccid" >> "$HOME/.gnupg/scdaemon.conf"
-fi
+grep -q "enable-ssh-support" "$HOME/.gnupg/gpg-agent.conf" 2>/dev/null \
+  || echo "enable-ssh-support" >> "$HOME/.gnupg/gpg-agent.conf"
+grep -q "disable-ccid" "$HOME/.gnupg/scdaemon.conf" 2>/dev/null \
+  || echo "disable-ccid" >> "$HOME/.gnupg/scdaemon.conf"
 
 gpgconf --launch gpg-agent 2>/dev/null || true
 
-# Wait for socket
 SSH_AUTH_SOCK=$(gpgconf --list-dirs agent-ssh-socket)
 export SSH_AUTH_SOCK
 for i in $(seq 1 10); do
@@ -72,128 +86,95 @@ for i in $(seq 1 10); do
   sleep 0.3
 done
 [[ -S "$SSH_AUTH_SOCK" ]] || die "gpg-agent socket never appeared at $SSH_AUTH_SOCK"
-ok "gpg-agent ready. SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+ok "gpg-agent ready."
 
-# ---------------------------------------------------------------------------
-# 4. Import public key
-# ---------------------------------------------------------------------------
+# 3. Import GPG public key
+KEY_FPR=$(gpg --with-colons --import-options show-only --import "$PUBKEY" 2>/dev/null \
+  | awk -F: '/^fpr/{print $10; exit}')
+[[ -n "$KEY_FPR" ]] || die "Could not read fingerprint from $PUBKEY"
+
 if gpg --list-keys "$KEY_FPR" &>/dev/null; then
   ok "GPG public key already imported."
 else
   info "Importing GPG public key..."
   gpg --import "$PUBKEY"
-  ok "GPG public key imported ($KEY_FPR)."
+  ok "GPG public key imported."
 fi
 
-# ---------------------------------------------------------------------------
-# 5. Link YubiKey card
-# ---------------------------------------------------------------------------
+# 4. Link YubiKey
 if ssh-add -L &>/dev/null 2>&1; then
   ok "YubiKey already linked — SSH key visible in agent."
 else
   echo
-  info "Insert your YubiKey if not already plugged in."
+  info "Insert your YubiKey now."
   read -rp "  Press Enter when ready... " _
 
-  if ! gpg --card-status &>/dev/null 2>&1; then
-    die "YubiKey not detected. Check it is inserted and pcscd is running."
-  fi
+  gpg --card-status &>/dev/null 2>&1 \
+    || die "YubiKey not detected. Check it is inserted and try again."
 
   gpg-connect-agent "scd serialno" "learn --force" /bye 2>/dev/null || true
 
-  # Explicitly add auth subkey keygrip to sshcontrol
   KEYGRIP=$(gpg --with-keygrip --list-keys "$KEY_FPR" 2>/dev/null \
     | awk '/\[A\]/{found=1} found && /Keygrip/{print $3; exit}')
 
   if [[ -n "$KEYGRIP" ]]; then
-    SSHCONTROL="$HOME/.gnupg/sshcontrol"
-    touch "$SSHCONTROL"
-    if ! grep -q "^$KEYGRIP" "$SSHCONTROL"; then
-      echo "$KEYGRIP" >> "$SSHCONTROL"
-    fi
+    touch "$HOME/.gnupg/sshcontrol"
+    grep -q "^$KEYGRIP" "$HOME/.gnupg/sshcontrol" 2>/dev/null \
+      || echo "$KEYGRIP" >> "$HOME/.gnupg/sshcontrol"
     gpg-connect-agent reloadagent /bye &>/dev/null || true
   fi
 
-  if ssh-add -L &>/dev/null 2>&1; then
-    ok "YubiKey linked — SSH key visible in agent."
-  else
-    die "YubiKey linked but SSH key still not visible. Try: sudo systemctl restart pcscd && gpg --card-status"
-  fi
+  ssh-add -L &>/dev/null 2>&1 \
+    || die "YubiKey linked but SSH key not visible. Try: sudo systemctl restart pcscd && gpg --card-status"
+
+  ok "YubiKey linked — SSH key visible in agent."
 fi
 
-# ---------------------------------------------------------------------------
-# 6. Pre-populate ~/.ssh/known_hosts with GitHub keys
-# ---------------------------------------------------------------------------
-KNOWN_HOSTS_SRC="$SCRIPT_DIR/known_hosts"
-if [[ ! -f "$KNOWN_HOSTS_SRC" ]]; then
-  curl -fsSL https://raw.githubusercontent.com/MarcGodard/machine-setup/main/known_hosts \
-    -o /tmp/known_hosts
-  KNOWN_HOSTS_SRC=/tmp/known_hosts
-fi
-
+# 5. Pre-populate ~/.ssh/known_hosts with GitHub keys
 mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
-KNOWN_HOSTS="$HOME/.ssh/known_hosts"
-touch "$KNOWN_HOSTS"
-
+touch "$HOME/.ssh/known_hosts"
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
-  host=$(echo "$line" | awk '{print $1}')
   key=$(echo "$line" | awk '{print $3}')
-  if ! grep -qF "$key" "$KNOWN_HOSTS" 2>/dev/null; then
-    echo "$line" >> "$KNOWN_HOSTS"
-  fi
-done < "$KNOWN_HOSTS_SRC"
-ok "GitHub host keys added to ~/.ssh/known_hosts."
+  grep -qF "$key" "$HOME/.ssh/known_hosts" 2>/dev/null \
+    || echo "$line" >> "$HOME/.ssh/known_hosts"
+done < "$SCRIPT_DIR/known_hosts"
+ok "GitHub host keys in ~/.ssh/known_hosts."
 
-# ---------------------------------------------------------------------------
-# 7. Establish SSH ControlMaster connection to GitHub
-#    (one touch here — dotfiles bootstrap reuses this connection)
-# ---------------------------------------------------------------------------
-# Ensure ControlMaster config exists for this session
-mkdir -p "$HOME/.ssh"
-SSH_CONF="$HOME/.ssh/config"
-touch "$SSH_CONF" && chmod 600 "$SSH_CONF"
-if ! grep -q "ControlMaster" "$SSH_CONF" 2>/dev/null || \
-   ! grep -A5 "Host github.com" "$SSH_CONF" 2>/dev/null | grep -q "ControlMaster"; then
-  cat >> "$SSH_CONF" << 'SSHEOF'
+# 6. Add ControlMaster to ~/.ssh/config so one touch covers all clones
+mkdir -p "$HOME/.ssh" && touch "$HOME/.ssh/config" && chmod 600 "$HOME/.ssh/config"
+if ! grep -A5 "Host github.com" "$HOME/.ssh/config" 2>/dev/null | grep -q "ControlMaster"; then
+  cat >> "$HOME/.ssh/config" << 'SSHEOF'
 
-# Added by machine-setup — ControlMaster keeps one authenticated connection
-# alive so multiple git operations only need one YubiKey touch.
 Host github.com
     ControlMaster auto
     ControlPath /tmp/ssh-cm-%r@%h:%p
     ControlPersist 60m
 SSHEOF
-  ok "ControlMaster config added to ~/.ssh/config."
+  ok "SSH ControlMaster configured for github.com."
 fi
 
+# 7. Open GitHub SSH connection — one touch here covers all git clones
 echo
-info ">>> Touch your YubiKey now to authenticate with GitHub <<<"
-info "    (one touch here covers all git clones during bootstrap)"
+info ">>> Touch your YubiKey when it flashes to authenticate with GitHub <<<"
 echo
 
 if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
-  ok "GitHub SSH authenticated. ControlMaster connection is live."
+  ok "GitHub SSH authenticated. ControlMaster connection is live for 60 min."
 else
-  warn "GitHub returned an unexpected response — but the connection may still work."
-  warn "Run 'ssh -T git@github.com' to verify manually."
+  warn "Could not confirm GitHub authentication. Run 'ssh -T git@github.com' to check."
 fi
 
 # ---------------------------------------------------------------------------
-# Done — print next steps
+# Done
 # ---------------------------------------------------------------------------
 echo
-echo "========================================"
-echo "  Setup complete"
-echo "========================================"
+echo "=============================="
+echo "  Ready"
+echo "=============================="
 echo
-info "Next steps:"
+info "Clone your dotfiles and run bootstrap:"
 echo
-echo "  1. Clone your dotfiles:"
-echo "       git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles"
-echo
-echo "  2. Run bootstrap:"
-echo "       bash ~/.dotfiles/bootstrap.sh"
-echo
-info "The GitHub SSH connection stays open for 60 min — no more YubiKey touches needed."
+echo "    git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles"
+echo "    bash ~/.dotfiles/bootstrap.sh"
 echo
