@@ -109,8 +109,28 @@ else
   info "Insert your YubiKey now."
   read -rp "  Press Enter when ready... " _
 
-  gpg --card-status &>/dev/null 2>&1 \
-    || die "YubiKey not detected. Check it is inserted and try again."
+  # Restart scdaemon so it picks up disable-ccid and connects fresh to pcscd
+  gpgconf --kill scdaemon 2>/dev/null || true
+  sleep 1
+
+  # Retry card-status a few times — scdaemon takes a moment to start
+  card_ok=false
+  for i in $(seq 1 5); do
+    if gpg --card-status &>/dev/null 2>&1; then
+      card_ok=true
+      break
+    fi
+    sleep 1
+  done
+
+  if ! $card_ok; then
+    echo
+    warn "YubiKey not detected after 5 attempts."
+    info "Diagnostics:"
+    sudo systemctl status pcscd --no-pager -l 2>/dev/null | tail -5 || true
+    gpg --card-status 2>&1 | tail -5 || true
+    die "Check the YubiKey is fully inserted and pcscd is running, then re-run setup.sh"
+  fi
 
   gpg-connect-agent "scd serialno" "learn --force" /bye 2>/dev/null || true
 
