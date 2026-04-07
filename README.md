@@ -61,6 +61,147 @@ git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles
 bash ~/.dotfiles/bootstrap.sh        ← full system setup, no more touches
 ```
 
+---
+
+## First-time YubiKey setup
+
+Do this **once** on your existing dev/setup machine before ever running `setup.sh` on a fresh machine. Skip if the YubiKey is already configured.
+
+The YubiKey acts as your SSH key and GPG signing/encryption key. Three GPG subkeys must be generated and moved onto the card:
+
+| Subkey | Usage | YubiKey slot |
+|--------|-------|-------------|
+| `[S]` Sign | Git commit signing | Slot 1 |
+| `[E]` Encrypt | `pass` store decryption | Slot 2 |
+| `[A]` Authenticate | SSH to GitHub and servers | Slot 3 |
+
+All three must be on the card. If any slot shows `[none]` in `gpg --card-status`, that operation will fail silently.
+
+### Prerequisites
+
+```bash
+sudo dnf install gnupg2 yubikey-manager pcscd
+sudo systemctl start pcscd
+```
+
+### Step 1 — Change default PINs
+
+The factory defaults are PIN `123456` and Admin PIN `12345678`. Change both before generating keys:
+
+```bash
+gpg --card-edit
+> passwd
+```
+
+Choose option 1 (change PIN) and option 3 (change Admin PIN). Keep them somewhere safe — the card locks after 3 wrong PIN attempts.
+
+### Step 2 — Generate the master key (certify only)
+
+```bash
+gpg --expert --full-generate-key
+```
+
+- Type: **RSA (set your own capabilities)**
+- Toggle capabilities until only **Certify** is selected, then confirm
+- Key size: **4096**
+- Expiry: **0** (no expiry)
+- Fill in name and email
+
+Note the fingerprint printed at the end — you'll need it throughout. Confirm with:
+
+```bash
+gpg --list-keys --with-keygrip
+```
+
+### Step 3 — Add three subkeys
+
+```bash
+gpg --expert --edit-key <fingerprint>
+```
+
+Run `addkey` three times, creating one subkey for each role:
+
+**Sign subkey:**
+```
+addkey → RSA (set your own capabilities) → Sign only → 4096 → 0
+```
+
+**Encrypt subkey:**
+```
+addkey → RSA (set your own capabilities) → Encrypt only → 4096 → 0
+```
+
+**Authenticate subkey:**
+```
+addkey → RSA (set your own capabilities) → Authenticate only → 4096 → 0
+```
+
+Then `save`.
+
+### Step 4 — Move subkeys to the YubiKey
+
+Plug in the YubiKey. Add `allow-loopback-pinentry` to `~/.gnupg/gpg-agent.conf`, then restart the agent:
+
+```bash
+echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+gpgconf --kill gpg-agent
+```
+
+Then move each subkey. The `keytocard` command asks for your **GPG passphrase** (the one you set in Step 2) first, then the **YubiKey Admin PIN**:
+
+```bash
+gpg --pinentry-mode loopback --edit-key <fingerprint>
+```
+
+```
+key 1          ← select Sign subkey (asterisk appears)
+keytocard → 1  ← Signature slot
+key 1          ← deselect
+key 2
+keytocard → 2  ← Encryption slot
+key 2
+key 3
+keytocard → 3  ← Authentication slot
+save           ← THIS deletes the local private key copies
+```
+
+If `keytocard` returns **"Invalid time"**, use a faked timestamp:
+
+```bash
+gpg --faked-system-time '20260405T120000!' --edit-key <fingerprint>
+```
+
+If `keytocard` returns **"No passphrase given"**, ensure `allow-loopback-pinentry` is in `gpg-agent.conf` and the agent was restarted.
+
+### Step 5 — Verify all three slots are filled
+
+```bash
+gpg --card-status
+```
+
+All three key slots (Signature, Encryption, Authentication) must show a key fingerprint — **none should show `[none]`**. This is the most common mistake: forgetting to move the Encrypt subkey means `pass` decryption will fail on every new machine.
+
+### Step 6 — Export the public key and update dotfiles
+
+```bash
+gpg --armor --export <fingerprint> > ~/Documents/Github/machine-setup/pubkey.asc
+cd ~/Documents/Github/machine-setup && git add pubkey.asc && git commit -m "Update pubkey" && git push
+```
+
+Also update the fingerprint references in `dotfiles/home/gitconfig` and `dotfiles/bootstrap.sh` if this is a new key.
+
+### Step 7 — Test SSH
+
+```bash
+export SSH_AUTH_SOCK=$(gpgconf --list-dirs agent-ssh-socket)
+ssh-add -L    # should show the auth subkey public key
+ssh -T git@github.com    # touch YubiKey when it flashes
+```
+
+Expected: `Hi MarcGodard! You've successfully authenticated...`
+
+---
+
 ## Files
 
 | File | Purpose |
