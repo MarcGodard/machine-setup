@@ -1,7 +1,9 @@
 # machine-setup
 
+> **Public repo.** Safe to clone on a fresh machine before any SSH keys are set up.
+
 Public entry point for a fresh Fedora Atomic machine. Sets up the YubiKey
-and GitHub SSH access so you can clone a private dotfiles repo and run bootstrap.
+and GitHub SSH access so you can clone the private dotfiles repo and run bootstrap.
 
 ## Usage
 
