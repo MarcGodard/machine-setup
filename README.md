@@ -5,9 +5,15 @@
 Public entry point for a fresh Fedora Atomic machine. Sets up the YubiKey
 and GitHub SSH access so you can clone the private dotfiles repo and run bootstrap.
 
+Works for both laptop/desktop and server. The difference:
+- **Laptop/desktop** — YubiKey stays connected, used daily for SSH, git signing, pass decryption
+- **Server** — YubiKey used during initial setup only, then unplugged. All services run without it.
+
 ## Usage
 
-### Step 1 — Clone and run (no YubiKey needed yet)
+### Laptop / Desktop
+
+#### Step 1 — Clone and run (no YubiKey needed yet)
 
 ```bash
 git clone https://github.com/MarcGodard/machine-setup.git ~/machine-setup
@@ -17,13 +23,13 @@ bash ~/machine-setup/setup.sh
 If `pcsc-lite-ccid` (the YubiKey CCID driver) is not installed, the script
 stages it via `rpm-ostree` and exits with a reboot prompt.
 
-### Step 2 — Reboot
+#### Step 2 — Reboot
 
 ```bash
 systemctl reboot
 ```
 
-### Step 3 — Re-run with YubiKey inserted
+#### Step 3 — Re-run with YubiKey inserted
 
 ```bash
 bash ~/machine-setup/setup.sh
@@ -33,7 +39,7 @@ This time it links the YubiKey to gpg-agent, opens a persistent SSH
 ControlMaster connection to GitHub (touch the key once when prompted),
 and prints the commands to clone your dotfiles.
 
-### Step 4 — Clone dotfiles and run bootstrap
+#### Step 4 — Clone dotfiles and run bootstrap
 
 ```bash
 git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles
@@ -45,8 +51,50 @@ YubiKey prompts for SSH.
 
 ---
 
+### Server
+
+The server setup is identical up front — same `setup.sh`, same YubiKey touch.
+After bootstrap completes, the YubiKey can be unplugged. Docker, ZFS, and all
+containers run indefinitely without it. The YubiKey is only needed again if you
+reinstall or need to decrypt something from the pass store manually.
+
+#### Step 1 — Clone and run (no YubiKey needed yet)
+
+```bash
+git clone https://github.com/MarcGodard/machine-setup.git ~/machine-setup
+bash ~/machine-setup/setup.sh
+```
+
+#### Step 2 — Reboot
+
+```bash
+systemctl reboot
+```
+
+#### Step 3 — Re-run with YubiKey inserted
+
+```bash
+bash ~/machine-setup/setup.sh
+```
+
+#### Step 4 — Clone dotfiles and run bootstrap
+
+```bash
+git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles
+bash server/setup-zfs.sh          # create appsPool/docker before Docker starts
+bash server/generate-env.sh       # pull secrets from pass, generate server/.env
+bash ~/.dotfiles/bootstrap.sh --server
+```
+
+#### Step 5 — Unplug YubiKey
+
+The server is now self-contained. All services run without the YubiKey.
+
+---
+
 ## Full sequence at a glance
 
+**Laptop / Desktop:**
 ```
 Fresh Fedora Atomic install
           ↓
@@ -59,6 +107,25 @@ bash ~/machine-setup/setup.sh        ← links YubiKey, touch once
           ↓
 git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles
 bash ~/.dotfiles/bootstrap.sh        ← full system setup, no more touches
+```
+
+**Server:**
+```
+Fresh Fedora Atomic install
+          ↓
+git clone https://github.com/MarcGodard/machine-setup.git ~/machine-setup
+bash ~/machine-setup/setup.sh        ← stages pcsc-lite-ccid, exits
+          ↓
+systemctl reboot
+          ↓
+bash ~/machine-setup/setup.sh        ← links YubiKey, touch once
+          ↓
+git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles
+bash server/setup-zfs.sh             ← create Docker dataset on appsPool
+bash server/generate-env.sh          ← pull secrets from pass into server/.env
+bash ~/.dotfiles/bootstrap.sh --server
+          ↓
+Unplug YubiKey — server runs without it
 ```
 
 ---
