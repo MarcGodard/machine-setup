@@ -186,12 +186,13 @@ ok "GitHub host keys in ~/.ssh/known_hosts."
 
 # 6. Add ControlMaster to ~/.ssh/config so one touch covers all clones
 mkdir -p "$HOME/.ssh" && touch "$HOME/.ssh/config" && chmod 600 "$HOME/.ssh/config"
+mkdir -p "$HOME/.ssh/controlmasters" && chmod 700 "$HOME/.ssh/controlmasters"
 if ! grep -A5 "Host github.com" "$HOME/.ssh/config" 2>/dev/null | grep -q "ControlMaster"; then
-  cat >> "$HOME/.ssh/config" << 'SSHEOF'
+  cat >> "$HOME/.ssh/config" << SSHEOF
 
 Host github.com
     ControlMaster auto
-    ControlPath /tmp/ssh-cm-%r@%h:%p
+    ControlPath $HOME/.ssh/controlmasters/%r@%h:%p
     ControlPersist 60m
 SSHEOF
   ok "SSH ControlMaster configured for github.com."

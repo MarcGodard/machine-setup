@@ -81,8 +81,8 @@ bash ~/machine-setup/setup.sh
 
 ```bash
 git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles
-bash server/setup-zfs.sh          # create appsPool/docker before Docker starts
-bash server/generate-env.sh       # pull secrets from pass, generate server/.env
+bash ~/.dotfiles/server/setup-zfs.sh          # create appsPool/docker before Docker starts
+bash ~/.dotfiles/server/generate-env.sh       # pull secrets from pass, generate server/.env
 bash ~/.dotfiles/bootstrap.sh --server
 ```
 
@@ -121,8 +121,8 @@ systemctl reboot
 bash ~/machine-setup/setup.sh        ← links YubiKey, touch once
           ↓
 git clone git@github.com:MarcGodard/dotfiles.git ~/.dotfiles
-bash server/setup-zfs.sh             ← create Docker dataset on appsPool
-bash server/generate-env.sh          ← pull secrets from pass into server/.env
+bash ~/.dotfiles/server/setup-zfs.sh             ← create Docker dataset on appsPool
+bash ~/.dotfiles/server/generate-env.sh          ← pull secrets from pass into server/.env
 bash ~/.dotfiles/bootstrap.sh --server
           ↓
 Unplug YubiKey — server runs without it
