@@ -39,6 +39,7 @@ echo
 # ---------------------------------------------------------------------------
 MISSING_PKGS=()
 rpm -q pcsc-lite-ccid   &>/dev/null || MISSING_PKGS+=(pcsc-lite-ccid)
+rpm -q pcsc-tools       &>/dev/null || MISSING_PKGS+=(pcsc-tools)
 rpm -q gnupg2-scdaemon  &>/dev/null || MISSING_PKGS+=(gnupg2-scdaemon)
 rpm -q pass             &>/dev/null || MISSING_PKGS+=(pass)
 
@@ -71,9 +72,30 @@ ok "pcsc-lite-ccid and gnupg2-scdaemon installed."
 export GPG_TTY=$(tty)
 export SSH_AUTH_SOCK=$(gpgconf --list-dirs agent-ssh-socket 2>/dev/null || true)
 
-# 1. Start pcscd
+# 1. Authorize PC/SC access via polkit, then start pcscd
+# pcscd is built with polkit; default policy only allows ACTIVE local seat
+# sessions. Over SSH (inactive session) it rejects the client with
+# "NOT authorized for action: access_pcsc" and gpg --card-status fails with
+# "No such device". Subject = login user running gpg (not the sudo calls),
+# so authorize this user by name — covers non-wheel/IdM accounts too.
+PCSC_RULE=/etc/polkit-1/rules.d/99-pcscd.rules
+PCSC_USER="${SUDO_USER:-$(id -un)}"
+if [[ ! -f "$PCSC_RULE" ]]; then
+  info "Installing polkit rule for PC/SC access (user: $PCSC_USER)..."
+  sudo tee "$PCSC_RULE" >/dev/null <<POLKIT
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.debian.pcsc-lite.access_pcsc" ||
+         action.id == "org.debian.pcsc-lite.access_card") &&
+        subject.user == "$PCSC_USER") {
+        return polkit.Result.YES;
+    }
+});
+POLKIT
+  ok "polkit rule installed at $PCSC_RULE."
+fi
+
 info "Starting pcscd..."
-sudo systemctl start pcscd 2>/dev/null || true
+sudo systemctl restart pcscd 2>/dev/null || true
 ok "pcscd running."
 
 # 2. Kill stale gpg-agent and relaunch with SSH support
