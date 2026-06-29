@@ -225,7 +225,17 @@ echo
 info ">>> Touch your YubiKey when it flashes to authenticate with GitHub <<<"
 echo
 
-if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+# First connection needs a touch and may be slow; retry before warning.
+gh_ok=false
+for i in 1 2 3; do
+  if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    gh_ok=true
+    break
+  fi
+  sleep 2
+done
+
+if $gh_ok; then
   ok "GitHub SSH authenticated. ControlMaster connection is live for 60 min."
 else
   warn "Could not confirm GitHub authentication. Run 'ssh -T git@github.com' to check."
