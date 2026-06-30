@@ -226,9 +226,14 @@ info ">>> Touch your YubiKey when it flashes to authenticate with GitHub <<<"
 echo
 
 # First connection needs a touch and may be slow; retry before warning.
+# NB: `ssh -T git@github.com` ALWAYS exits non-zero (GitHub gives no shell), so
+# under `set -o pipefail` an `ssh | grep` pipeline reports ssh's failure even
+# when grep matched — the test then "fails" on every successful auth. Capture
+# the output first, then match it; never gate on ssh's exit status.
 gh_ok=false
 for i in 1 2 3; do
-  if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+  gh_out=$(ssh -T git@github.com 2>&1 || true)
+  if [[ "$gh_out" == *"successfully authenticated"* ]]; then
     gh_ok=true
     break
   fi
