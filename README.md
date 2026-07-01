@@ -281,6 +281,8 @@ Expected: `Hi MarcGodard! You've successfully authenticated...`
 
 ## YubiKey PINs
 
+> These are the factory defaults, listed here for reference only, not your real PIN. Change both in Step 1 before generating keys, and never let this table describe a live PIN (this repo is public).
+
 | PIN | Value | Used for |
 |-----|-------|---------|
 | PIN | `123456` | GPG operations (sign, auth, decrypt) |

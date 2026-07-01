@@ -69,7 +69,7 @@ ok "pcsc-lite-ccid and gnupg2-scdaemon installed."
 
 # GPG_TTY must be set so pinentry-curses can prompt for PIN after a reboot.
 # Without this, gpg-agent fails immediately instead of asking for the PIN.
-export GPG_TTY=$(tty)
+export GPG_TTY=$(tty 2>/dev/null || true)
 export SSH_AUTH_SOCK=$(gpgconf --list-dirs agent-ssh-socket 2>/dev/null || true)
 
 # 1. Authorize PC/SC access via polkit, then start pcscd
