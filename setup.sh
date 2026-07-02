@@ -45,7 +45,10 @@ rpm -q pass             &>/dev/null || MISSING_PKGS+=(pass)
 
 if [[ ${#MISSING_PKGS[@]} -gt 0 ]]; then
   info "Installing: ${MISSING_PKGS[*]}"
-  rpm-ostree install "${MISSING_PKGS[@]}"
+  # --idempotent: no-op if already staged (rpm -q only sees the booted
+  # deployment, so a re-run before the reboot lands here again).
+  # sudo: script runs over SSH too, where polkit denies non-local sessions.
+  sudo rpm-ostree install --idempotent "${MISSING_PKGS[@]}"
 
   echo
   echo "========================================"
@@ -61,7 +64,7 @@ if [[ ${#MISSING_PKGS[@]} -gt 0 ]]; then
   exit 0
 fi
 
-ok "pcsc-lite-ccid and gnupg2-scdaemon installed."
+ok "pcsc-lite-ccid, pcsc-tools, gnupg2-scdaemon, and pass installed."
 
 # ---------------------------------------------------------------------------
 # Pass 2: YubiKey + GitHub SSH setup
@@ -80,9 +83,11 @@ export SSH_AUTH_SOCK=$(gpgconf --list-dirs agent-ssh-socket 2>/dev/null || true)
 # so authorize this user by name — covers non-wheel/IdM accounts too.
 PCSC_RULE=/etc/polkit-1/rules.d/99-pcscd.rules
 PCSC_USER="${SUDO_USER:-$(id -un)}"
-if [[ ! -f "$PCSC_RULE" ]]; then
+# Rule embeds one username. Append a rule for this user if the file exists
+# but was written for someone else. grep -s: no error when file is missing.
+if ! sudo grep -qs "subject.user == \"$PCSC_USER\"" "$PCSC_RULE"; then
   info "Installing polkit rule for PC/SC access (user: $PCSC_USER)..."
-  sudo tee "$PCSC_RULE" >/dev/null <<POLKIT
+  sudo tee -a "$PCSC_RULE" >/dev/null <<POLKIT
 polkit.addRule(function(action, subject) {
     if ((action.id == "org.debian.pcsc-lite.access_pcsc" ||
          action.id == "org.debian.pcsc-lite.access_card") &&
@@ -96,7 +101,11 @@ fi
 
 info "Starting pcscd..."
 sudo systemctl restart pcscd 2>/dev/null || true
-ok "pcscd running."
+if systemctl is-active --quiet pcscd.socket || systemctl is-active --quiet pcscd; then
+  ok "pcscd running."
+else
+  warn "pcscd is not active. YubiKey detection below will likely fail."
+fi
 
 # 2. Kill stale gpg-agent and relaunch with SSH support
 info "Launching gpg-agent..."
@@ -180,8 +189,10 @@ ok "YubiKey card connected."
 # Learn the card and populate sshcontrol if not already done
 gpg-connect-agent "scd serialno" "learn --force" /bye 2>/dev/null || true
 
-KEYGRIP=$(gpg --with-keygrip --list-keys "$KEY_FPR" 2>/dev/null \
-  | awk '/\[A\]/{found=1} found && /Keygrip/{print $3; exit}')
+# Machine-readable colon output: human output prints the auth subkey as
+# [AR] on gpg 2.4.x, so matching [A] finds nothing. Field 12 = capabilities.
+KEYGRIP=$(gpg --with-colons --with-keygrip --list-keys "$KEY_FPR" 2>/dev/null \
+  | awk -F: '$1=="sub" && $12 ~ /a/ {want=1; next} want && $1=="grp" {print $10; exit}')
 
 if [[ -n "$KEYGRIP" ]]; then
   touch "$HOME/.gnupg/sshcontrol"
